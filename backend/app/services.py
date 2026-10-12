@@ -82,14 +82,18 @@ def parse_version(db: Session, store: ObjectStore, version_id: UUID, job_id: UUI
     try:
         content = store.get_bytes(file_object.object_key)
         suffix = Path(file_object.original_name).suffix
-        with tempfile.NamedTemporaryFile(suffix=suffix) as temp:
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temp:
             temp.write(content)
             temp.flush()
+            temp_path = Path(temp.name)
+        # 先关闭句柄再交给解析器：Windows 下 NamedTemporaryFile 保持文件打开，
+        # parse_with_mineru / parse_document 重新打开同一路径会触发 [Errno 13] Permission denied。
+        try:
             if parser_kind == ParserKind.MINERU:
-                result = parse_with_mineru(Path(temp.name))
+                result = parse_with_mineru(temp_path)
             else:
                 try:
-                    result = parse_document(Path(temp.name))
+                    result = parse_document(temp_path)
                 except Exception as exc:
                     if suffix.lower() not in {".pdf", ".png", ".jpg", ".jpeg"}:
                         raise
@@ -99,7 +103,9 @@ def parse_version(db: Session, store: ObjectStore, version_id: UUID, job_id: UUI
                         file_object.original_name,
                         exc,
                     )
-                    result = parse_with_mineru(Path(temp.name))
+                    result = parse_with_mineru(temp_path)
+        finally:
+            temp_path.unlink(missing_ok=True)
         markdown = result.text.encode("utf-8")
         structured = json.dumps(result.structured or result.metadata, ensure_ascii=False, indent=2).encode("utf-8")
         base = f"artifacts/{job.id}"

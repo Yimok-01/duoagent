@@ -53,8 +53,8 @@ class SemanticRequirement(BaseModel):
 
 
 class Clarification(BaseModel):
-    expression: str
-    reason: str
+    expression: str = Field(description="用户原话中无法生成 SQL 过滤条件的结构化硬条件")
+    reason: str = Field(description="缺少哪个结构化字段的什么取值，或与哪个条件矛盾")
 
 
 class QueryPlan(BaseModel):
@@ -62,7 +62,13 @@ class QueryPlan(BaseModel):
     filters: list[FilterCondition] = Field(default_factory=list, description="可由 PostgreSQL 精确执行的结构化硬条件")
     semantic_requirements: list[SemanticRequirement] = Field(default_factory=list, description="需要调用混合检索寻找材料证据的条件")
     preferences: list[str] = Field(default_factory=list, description="优先、倾向等软条件，保留给后续排序或评估，不作为 SQL 排除条件")
-    clarifications: list[Clarification] = Field(default_factory=list, description="缺少阈值、含义不明或互相矛盾的条件")
+    clarifications: list[Clarification] = Field(
+        default_factory=list,
+        description=(
+            "只用于结构化硬条件无法生成 SQL 过滤条件的情况：缺少取值、无法映射到 Filter DSL 字段或取值、结构化条件互相矛盾。"
+            "材料经历、技能、项目、成果描述不具体不写入这里，默认留空"
+        ),
+    )
 
     @property
     def executable(self) -> bool:
@@ -247,12 +253,21 @@ def search_with_optimization(
     }
 
 
-QUERY_PLAN_SYSTEM_PROMPT = """你是人才查询计划编译器。只把用户明确表达的条件转换为 QueryPlan。
+QUERY_PLAN_SYSTEM_PROMPT = """你是人才查询计划编译器。只把用户明确表达的条件转换为 QueryPlan，不补充用户没说的阈值。
 硬条件只允许使用下面的 Filter DSL，禁止生成 SQL：
 {filter_dsl}
-经历、技能、项目成果等材料内容写入 semantic_requirements。
-“优先”等软偏好写入 preferences，不能改写为硬条件。
-含糊表达写入 clarifications，禁止自行补充阈值。权限、租户和密级不从用户文本提取。"""
+task_type 按查询目的选择：筛选、查找、推荐候选人用 find_talent；查询某个已知人员的档案信息用 lookup_profile。
+经历、技能、项目成果等材料内容写入 semantic_requirements，query 保留用户原话的语义；缺少角色、时长、交付成果或技术深度不构成需要澄清的理由。
+“做过、参与过、负责过某项技术或项目”属于材料内容，写入 semantic_requirements；current_position 只接收用户直接说出的岗位名称（如“Java 后端工程师”“算法工程师”），技术栈、框架或系统名（如“推荐系统”“大模型”“Flink”）不能作为 current_position 的取值，否则会把候选人过滤空。
+“优先”“最好”“资深”“经验丰富”等软偏好写入 preferences，不能改写为硬条件，也不需要用户补充年龄或职级阈值。
+默认不澄清，但结构化硬条件是例外：只要一个条件要走 SQL 过滤却无法确定，就必须写入 clarifications，让用户补齐后再执行。
+必须澄清的结构化情形：
+1. 结构化字段只有模糊描述、没有可执行取值，无法生成过滤条件：如“年龄别太大”“年限再高一点”“职级高一些”“级别高一点的”。
+2. 结构化表述无法唯一映射到 Filter DSL 的字段或取值：如“江浙沪”“一线城市”“南方”“薪资 30k 以上”“名校毕业”这类 DSL 中没有或对应多个取值的要求。
+3. 结构化硬条件之间互相矛盾，任何计划都执行不了：如同时要求“应届生”和“5 年以上工作经验”。
+写入 clarifications 时，reason 必须写清缺少哪个字段的什么取值，以及可以接受哪种形式的取值。
+不澄清的情形：经历、技能、项目成果等材料内容无论写得多含糊，都按用户原话写入 semantic_requirements，交给后续混合检索、查询优化和精排处理；“优先”“最好”“资深”等软偏好写入 preferences。
+权限、租户和密级不从用户文本提取。"""
 
 
 def compile_query_plan(query: str, model: Any) -> QueryPlan:

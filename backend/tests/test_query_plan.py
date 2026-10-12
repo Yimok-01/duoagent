@@ -5,6 +5,7 @@ from pydantic import ValidationError
 from sqlalchemy.dialects import postgresql
 
 from app.query_plan import (
+    QUERY_PLAN_SYSTEM_PROMPT,
     FilterCondition,
     QueryPlan,
     SemanticRequirement,
@@ -104,6 +105,15 @@ def test_filter_registry_is_also_sent_to_query_compiler():
     assert seen["schema"] is QueryPlan
     assert "age: 年龄" in seen["messages"][0][1]
     assert "region: 工作地区" in filter_dsl
+
+
+def test_query_plan_prompt_clarifies_only_structured_hard_conditions():
+    # 澄清只服务于生成 SQL 的结构化硬条件；材料、语义和软偏好不得阻塞查询
+    assert "含糊表达写入 clarifications" not in QUERY_PLAN_SYSTEM_PROMPT
+    assert "必须澄清的结构化情形" in QUERY_PLAN_SYSTEM_PROMPT
+    assert "Filter DSL 的字段或取值" in QUERY_PLAN_SYSTEM_PROMPT
+    assert "互相矛盾" in QUERY_PLAN_SYSTEM_PROMPT
+    assert "都按用户原话写入 semantic_requirements" in QUERY_PLAN_SYSTEM_PROMPT
 
 
 def test_query_optimization_is_triggered_by_failure_type():

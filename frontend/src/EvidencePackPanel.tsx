@@ -19,6 +19,21 @@ const statusLabels: Record<string, string> = { sufficient: '材料支持当前�
   missing: '未找到可支持要求的证据', conflicting: '材料存在待核查冲突' };
 const answerLabels: Record<string, string> = { yes: '支持', no: '反向' };
 
+type ClarificationItem = { expression?: string; reason?: string };
+
+export function formatErrorDetail(detail: unknown): string {
+  if (typeof detail === 'string') return detail;
+  const payload = detail as { code?: string; items?: ClarificationItem[]; detail?: unknown } | null;
+  if (payload && payload.code === 'clarification_required' && Array.isArray(payload.items)) {
+    const items = payload.items
+      .map((item) => [item.expression, item.reason].filter(Boolean).join('：'))
+      .filter(Boolean)
+      .join('；');
+    return items ? `需要先确认：${items}` : '查询条件需要补充后才能执行';
+  }
+  return JSON.stringify(detail);
+}
+
 export function EvidencePackPanel({ api, tenant }: { api: string; tenant: string }) {
   const [query, setQuery] = useState('筛选在上海且有企业知识库和大模型应用项目经验的候选人');
   const [packs, setPacks] = useState<Pack[]>([]);
@@ -31,7 +46,7 @@ export function EvidencePackPanel({ api, tenant }: { api: string; tenant: string
   async function read(path: string, options: RequestInit = {}) {
     const response = await fetch(`${api}${path}`, { ...options, headers });
     const data = await response.json();
-    if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail));
+    if (!response.ok) throw new Error(formatErrorDetail(data.detail));
     return data;
   }
   async function search() {

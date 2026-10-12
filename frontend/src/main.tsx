@@ -614,6 +614,7 @@ function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...values,
+          birth_date: values.birth_date || null,
           years_of_experience: Number(values.years_of_experience) || null,
         }),
       });
